@@ -1,6 +1,20 @@
 local/
 results~/
 blog_post/
+*.png
+*.jpg
+*.json
+*.h5
+*.log
+*.gif
+*.avi
+*.gz
+pics/
+logs/
+saved_models/
+server_results/
+anim/
+summary/
 
 ## Some defaults ##
 # Byte-compiled / optimized / DLL files
