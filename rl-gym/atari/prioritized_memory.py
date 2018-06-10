@@ -13,15 +13,14 @@ class PERMemory:
     a = 0.6
     beta = 0.4
     beta_increment_per_sampling = 0.001
-    abs_err_upper = 1. # clipped abs error
+    #abs_err_upper = 1. # clipped abs error
 
     def __init__(self, capacity):
         self.tree = SumTree(capacity)
         self.capacity = capacity
 
     def _get_priority(self, error):
-        # clip abs error to 1.
-        return (np.minimum(error, self.abs_err_upper) + self.e) ** self.a
+        return (error + self.e) ** self.a
 
     def add(self, error, sample):
         p = self._get_priority(error)

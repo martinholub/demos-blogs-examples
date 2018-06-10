@@ -30,7 +30,6 @@ if args.mode == "train":
     try:
         game.main()
     finally:
-        game.plot_()
         num_ep = len(game.episode_rewards)
         game.agent.save_network("saved_models/spaceinvader_ep{}.h5".format(num_ep))
 
