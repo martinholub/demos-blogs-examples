@@ -2,7 +2,7 @@
 
 source ~/.bashrc
 tar --exclude={atari/saved_models/*,atari/server_results,logs/*,anim/*,__pycache__,summary/*} -zcvf atari_server.tar.gz atari/*
-scp atari_server.tar.gz mholub@euler.ethz.ch:~/rl-gym/
+scp atari_server.tar.gz $HOST:~/rl-gym/
 ssh $HOST "cd rl-gym && tar -xvzf atari_server.tar.gz && chmod u+x atari/main.py"
 # test
 ssh $HOST "cd rl-gym/atari && python main.py --network=DQN --mode=train --save"
