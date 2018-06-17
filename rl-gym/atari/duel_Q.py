@@ -199,8 +199,8 @@ class DuelQ(object):
             #state is x, q_target is y
             loss = self.model.train_on_batch(states, q_targets, sample_weight = is_weights)
 
-            logger.debug("Sampled Indices: {}".format((idxs)))
-            logger.debug("IS Weights: {}".format((is_weights)))
+            # logger.debug("Sampled Indices: {}".format((idxs)))
+            # logger.debug("IS Weights: {}".format((is_weights)))
 
         else:
             ## Simple Style Draw random minibatch sample from memory
@@ -210,7 +210,8 @@ class DuelQ(object):
             loss = self.model.train_on_batch(states, q_targets)
 
         loss = dict(zip(self.model.metrics_names, loss))
-        logger.info("Loss/Metrics on fit: {}".format(loss))
+        # logger.info("Loss/Metrics on fit: {}".format(loss))
+        return loss["loss"]
 
     def save_network(self, path):
         # Saves model at specified path as h5 file.

@@ -12,6 +12,8 @@ matplotlib.use("Agg") # use noninteractive backend
 import matplotlib.pyplot as plt
 import subprocess
 import random
+import os
+import shutil
 
 from duel_Q import DuelQ
 from deep_Q import DeepQ
@@ -23,13 +25,14 @@ from decorate import func_args
 from logger_utils import initialize_logger, teardown_logger
 logger = initialize_logger() # logging is handled also by job manager
 
-class SpaceInvader(object):
-    def __init__(self, env_id = "SpaceInvadersNoFrameskip-v4", mode = "DQN",
-                replay_size = 64, num_kept_frames = 3, max_memory = 100000,
-                discount = 0.9, epsilon = 1., eps_decay_rate = 0.995,
-                eps_min = 0.01, max_steps = 100000, min_steps_train = 20000,
-                num_episodes = 15000, img_size = (84, 84), learn_rate = 0.001,
-                max_frames = 20000000, target_update_freq = 10000, model_train_freq = 200,
+class AtariGame(object):
+    def __init__(self, mode = "DQN", replay_size = 32, min_steps_train = 20000,
+                #env_id = "SpaceInvadersNoFrameskip-v4", num_kept_frames = 3,
+                env_id = "BreakoutDeterministic-v4", num_kept_frames = 4,
+                discount = 0.99, epsilon = 1., eps_decay_rate = None,
+                eps_min = 0.1, max_steps = 100000, max_memory = None,
+                num_episodes = 30000, img_size = (105, 80), learn_rate = 0.001,
+                max_frames = 50000000, target_update_freq = 10000, model_train_freq = 1,
                 verbose = True, load_path = None, model_save_freq = 1000,
                 qa_report_freq = 50):
 
@@ -39,7 +42,7 @@ class SpaceInvader(object):
         self.img_size = tuple(img_size) # downsampling image size
         self.discount = float(discount) # discount rate (also gamma)
         self.epsilon = float(epsilon) # exploration rate
-        self.eps_decay_rate = float(eps_decay_rate) # increase in model certainity
+        self.eps_max = float(epsilon)
         self.eps_min = float(eps_min) # minimal exploration rate
         self.max_steps = int(max_steps) # number of total frames per episode
         self.min_steps_train = int(min_steps_train) # Step No. when training starts
@@ -54,6 +57,16 @@ class SpaceInvader(object):
         # Target
         # bring target up to speed with model every n steps
         self.target_update_freq = int(target_update_freq)
+
+        if not max_memory:
+            max_memory = int(self.min_steps_train*10)
+
+        if not eps_decay_rate:
+            # Go to eps_min over third of training, exponentially
+            self.eps_decay_rate = float(np.power((self.eps_min / self.epsilon),
+                                                (1 / (self.num_episodes/3))))
+        else:
+            self.eps_decay_rate = float(eps_decay_rate) # increase in model certainity
 
         # Construct appropriate network based on flags
         self.mode = mode
@@ -74,16 +87,19 @@ class SpaceInvader(object):
         # Beware of where frames-skipping/action-repetition happens
         # https://github.com/openai/gym/blob/master/gym/envs/__init__.py
         # also for limits on _max_env_steps
-        # For simplicity, set num_kept_frames=3 and use '{}NoFrameskip-v4' or '{}v4'
+        # For simplicity, set num_kept_frames=3 and use '{}NoFrameskip-v4' or '{}-v4'
+        # For faster training, can use '{}Deterministic-v4' which skips frames
+        # Can check in game.env.unwrapped.frameskip
         """
         self.env = gym.make(name)
         _ = self.env.reset()
         self.action_size = self.env.action_space.n
         self.state_size = self.env.observation_space.shape[0]
         # self.env._max_env_steps = self.max_steps # not needed, handled by for loop
-        logger.info("Environment: {}. There are {} actions: {}".\
+        logger.info("Environment: {}. There are {} actions: {}. Frameskip: {}".\
                 format(self.env.spec.id, self.action_size,
-                        self.env.unwrapped.get_action_meanings()))
+                        self.env.unwrapped.get_action_meanings(),
+                        self.env.unwrapped.frameskip))
 
     def _init_process_buffer(self):
         process_buffer = []
@@ -96,6 +112,12 @@ class SpaceInvader(object):
 
     def load_network(self, path):
         self.agent.load_network(path)
+
+    def get_curr_eps(self, ep):
+        """ Anneal epsilon value linearly between max and min over third of episodes
+        """
+        eps_diff = self.eps_max - self.eps_min
+        return (self.eps_max) - (ep/self.num_episodes*3)*eps_diff
 
     def convert_process_buffer(self):
         """Converts the list of num_kept_frames images in the process buffer
@@ -159,11 +181,16 @@ class SpaceInvader(object):
         """
         self.episode_rewards = []   # Store reward achieved at each epsiode
         self.all_rewards = []       # Store reward obtained at each frame
+        self.episode_losses = []       # Store mean loss for each episode
+        self.episode_durations = []
         frame_no = 0                # The smallest unit of training
+        state_no = 0                # Each state has `num_kept_frames` frames
         initial_state = self.convert_process_buffer()
+        ale_lives = self.env.unwrapped.ale.lives() # Max number of lives
 
         for ep in range(self.num_episodes):
             # Starting a clean game.
+            start_state = state_no
             state_ref = self.env.reset() # Reset the environment, get reference state
 
             # Do we always start from the same spot?
@@ -173,8 +200,9 @@ class SpaceInvader(object):
             state = initial_state        # initial state == current state at each ep start
 
             episode_reward = 0           # This one should be increasing with more training
+            episode_loss = 0
             done = False                 # i.e. we were killed and the game has ended
-            num_lives = 3                # How many lives do we start with?
+            num_lives = ale_lives        # How many lives do we start with?
 
             for _ in range(self.max_steps): # self.env._max_episode_steps = self.max_steps
                 self.process_buffer = [] # clean up buffer
@@ -209,12 +237,14 @@ class SpaceInvader(object):
                     # Pad the array with empty observations, if necessary
                     self.process_buffer.append(np.zeros(state_ref.shape, np.float32))
 
-                if env_info["ale.lives"] != num_lives:
-                    num_lives -= 1
-                    was_killed = True
-                # Penalize terminal states. Penalize also static actions (??)
+                if "ale.lives" in env_info:
+                    if env_info["ale.lives"] != num_lives:
+                        num_lives -= 1
+                        was_killed = True
+                        # Penalize terminal states. Penalize also static actions (??)
+                        # e.g. by action==0 or reward==0
+                        reward += (was_killed * -10.0) #+ (reward == 0) * -1.0
 
-                reward += (was_killed * -10.0) #+ (reward == 0) * -1.0
                 episode_reward += reward
                 next_state = self.convert_process_buffer() # Preprocess content of buffer
                 # Store (s,a,r,s',d) in memory
@@ -231,14 +261,15 @@ class SpaceInvader(object):
                         in_memory = len(self.agent.memory)            # deque
                     if in_memory >= self.min_steps_train:
                         # TODO: how to pass Logger instance between modules?
-                        logger.info("Model trained, frame: {}".format(frame_no))
-                        self.agent.replay(self.discount, logger)
+                        # logger.info("Model trained, frame: {}".format(frame_no))
+                        loss = self.agent.replay(self.discount, logger)
+                        episode_loss += loss
 
 
                 # TARGET DQN: Update target NN less frequently than model DQN
                 if (state_no%self.target_update_freq == (self.target_update_freq-1)):
                     self.agent.target_update()
-                    logger.info("Target updated, frame: {}".format(frame_no))
+                    # logger.info("Target updated, frame: {}".format(frame_no))
 
                 if self.verbose: # Report some values for debugging
                     if (state_no%self.qa_report_freq == (self.qa_report_freq - 1)):
@@ -249,10 +280,14 @@ class SpaceInvader(object):
                     break
 
             # EXPLORATION/EXPLOTATION POLICY: Increase model certainity
-            if self.epsilon > self.eps_min:
-                self.epsilon *= self.eps_decay_rate
+            if (self.epsilon > self.eps_min): #& in_memory >= (self.min_steps_train):
+                self.epsilon *= self.eps_decay_rate # exponential
+                # self.epsilon = self.get_curr_eps(ep) # linear
 
             self.episode_rewards.append(episode_reward)
+            self.episode_durations.append(state_no - start_state)
+            self.episode_losses.append( episode_loss / (state_no - start_state) * \
+                                        self.model_train_freq)
 
             if self.verbose: # Report some values for debugging
                 if (((ep % 15) == 0) and ep > 0):
@@ -266,18 +301,18 @@ class SpaceInvader(object):
 
             if ((ep % self.model_save_freq) == 0 and ep > 0):
                 logger.info("Saving Network, frame: {}, ep: {}".format(frame_no, ep+1))
-                self.agent.save_network("saved_models/" + \
-                                        self.mode+"_test_"+str(frame_no)+".h5")
+                self.agent.save_network("saved_models/" + self.env.spec.id + \
+                                        "_" + self.mode+"_fr"+str(frame_no)+".h5")
 
             if frame_no >= self.max_frames or ep == (self.num_episodes - 1) :
                 logger.info("Frame # {}. End of Training.".format(frame_no))
                 logger.info("Saving Network, frame: {}, ep: {}".format(frame_no, ep+1))
-                self.agent.save_network("saved_models/" + \
-                                        self.mode+"_test_"+str(ep)+".h5")
+                self.agent.save_network("saved_models/" + self.env.spec.id + \
+                                        "_" + self.mode+"_ep"+str(ep+1)+".h5")
                 break
 
     def plot_(self):
-        """Plot all epsiode rewards collected throughout training
+        """Plot all epsiode rewards,losses,lengths collected throughout training
         """
         try:
             plt.clf()
@@ -285,13 +320,35 @@ class SpaceInvader(object):
             ax.plot(self.episode_rewards)
             ax.set_xlabel("Episode")
             ax.set_ylabel("Reward")
-            # ax.axhline(self.ep.reward_solve, 0, 1, alpha = 0.5, ls = "--", lw = "1.0",
-                    # color = "firebrick")
             fig.savefig("summary/" + self.env.spec.id + "_Erewards.png")
-            logger.info("Plot was saved.")
+            logger.info("Plot of Rewards was saved.")
+
         except NameError as e: # or whatever gets thrown if not defined
             raise e
-        pass
+
+        try:
+            plt.clf()
+            fig, ax  = plt.subplots(1, 1)
+            ax.plot(self.episode_losses)
+            ax.set_xlabel("Episode")
+            ax.set_ylabel("Mean Replay Loss")
+            fig.savefig("summary/" + self.env.spec.id + "_Elosses.png")
+            logger.info("Plot of Losses was saved.")
+
+        except NameError as e: # or whatever gets thrown if not defined
+            raise e
+
+        try:
+            plt.clf()
+            fig, ax  = plt.subplots(1, 1)
+            ax.plot(self.episode_durations)
+            ax.set_xlabel("Episode")
+            ax.set_ylabel("Number of States")
+            fig.savefig("summary/" + self.env.spec.id + "_Elengths.png")
+            logger.info("Plot of Episode Lengths was saved.")
+
+        except NameError as e: # or whatever gets thrown if not defined
+            raise e
 
     def simulate_(self):
         """Simple game visualizer
@@ -299,6 +356,17 @@ class SpaceInvader(object):
         Usses ffmpeg to convert simulated images into animated gif. Make sure
         it is installed on your machine.
         """
+        # Clean up anim direcotory contents
+        folder = os.path.abspath("anim")
+        for f in os.listdir(folder):
+            fpath = os.path.join(folder, f)
+            try:
+                if os.path.isfile(fpath):
+                    os.unlink(fpath)
+                #elif os.path.isdir(file_path): shutil.rmtree(file_path)
+            except Exception as e:
+                print(e)
+
         done = False
         tot_award = 0
         state = self.env.reset()
@@ -307,7 +375,7 @@ class SpaceInvader(object):
             frame_no += 1
             state = self.convert_process_buffer()
             # Take deterministic action (eps=0) according to model.
-            action = self.agent.policy(state, epsilon = 0)[0]
+            action = self.agent.policy(state, epsilon = 0.05)[0]
             state, reward, done, _ = self.env.step(action)
             tot_award += reward
 
@@ -337,6 +405,5 @@ class SpaceInvader(object):
         try:
             self.train()
         finally:
-            self.plot_()
             # game.simulate_()
             teardown_logger(logger)
