@@ -12,7 +12,7 @@ ap.add_argument("-n", "--network", type=str, action='store',
 ap.add_argument("-m", "--mode", type=str, action='store',
                 help="Please specify the mode you wish to run, either train or test",
                 required=False, choices = ["train", "test"], default = "train")
-ap.add_argument("-e", "--env", type=str, action='store', default = "SpaceInvadersNoFrameskip-v4",
+ap.add_argument("-e", "--env", type=str, action='store', default = "BreakoutDeterministic-v4",
                 help="Please specify the environment id.", required=True)
 ap.add_argument("-l", "--load", type=str, action='store',
                 help="Please specify the file you wish to load weights from(for example saved.h5)",
@@ -42,9 +42,12 @@ if args.mode == "train":
             except Exception as e:
                 print("Simulation did not work!")
 
+elif args.mode == "test":
+    game.agent.test(n_episodes = 10, visualize = False)
+
 if args_mode != "train" & args.save:
     try:
         game.simulate_()
     except Exception as e:
         print("Simulation did not work!")
-        raise e    
+        raise e

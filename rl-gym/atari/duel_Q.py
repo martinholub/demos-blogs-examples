@@ -6,15 +6,16 @@ from keras.models import load_model, Sequential, Model, model_from_config
 from keras.layers.convolutional import Convolution2D
 from keras.optimizers import Adam, RMSprop #Adagrad, RMSProp
 from keras.layers.core import Activation, Dropout, Flatten, Dense, Lambda
-from keras.layers import Input
+from keras.layers import Input, multiply
 from keras.layers.normalization import BatchNormalization
 from keras import backend as K
-from keras.callbacks import Callback, CallbackList
+from keras.regularizers import l2
+from keras.callbacks import TensorBoard
 
 from prioritized_memory import PERMemory as Memory
 from logger_utils import _L
 from collections import deque, Counter
-from utils import clipped_error, mean_q
+from utils import clipped_masked_error, mean_q
 
 # logger = _L()
 
@@ -27,16 +28,20 @@ class DuelQ(object):
     https://arxiv.org/pdf/1509.06461.pdf ... double DQN
     """
     def __init__(self, learn_rate = 0.001, img_size = (84,84), num_frames = 3,
-                action_size = 6, replay_size = 64, max_memory = 20000):
+                action_size = 6, replay_size = 64, max_memory = 20000, is_test = False,
+                num_episodes = 10):
         self.img_size = tuple(img_size) # downsampling image size
         self.num_frames = int(num_frames) # Deterministic frameskip
         self.learn_rate = float(learn_rate) # optimizer learning rate
         self.action_size = int(action_size) # No. of possible actions in env
         self.num_epochs = int(1) # Epoch size used for training
         self.tau = float(0.01) #
+        self.is_test = bool(is_test)
         # Memory
         self.replay_size = int(replay_size) # Size of minibatch sample from memory
         self.memory = Memory(int(max_memory)) # deque(maxlen=max_memory)
+        # self.memory = deque(maxlen=max_memory)
+        self.num_episodes = int(num_episodes)
         # Agent
         self._construct_q_network()
 
@@ -50,54 +55,84 @@ class DuelQ(object):
 
         https://www.nature.com/articles/nature14236 ... paper on DQN
         https://arxiv.org/pdf/1511.06581.pdf ... dueling DQN
+
+        Notes:
+          Using Batch Normlization requires same size of batch on training and
+          test. This cannot be easily implemented in RL scenario with PER.
         """
-        model = Sequential()
+        # Sequential model.add replaced with x = (...)(x) functional API
+        # model = Sequential()
 
-        model.add(Convolution2D(filters = 32, kernel_size = (8, 8), strides = (4, 4),
-                                input_shape = self.img_size + (self.num_frames, )))
+        #  Mask that allows updating of only action that was observed
+        mask_input = Input((self.action_size, ), name = 'mask')
+        #  Preprocess data on input, allows storing as uint8
+        frames_input = Input(self.img_size + (self.num_frames, ), name = 'frames')
+        # Scale by 142 instead of 255, because for BreakOut the max val is 142
+        x = (Lambda(lambda x: x / 142.0)(frames_input))
+
+        # DEBUG: All filters, and units halved to make easier to train
+
+        x = (Convolution2D(filters = 16, kernel_size = (8, 8), strides = (4, 4),
+                                # input_shape = self.img_size + (self.num_frames, ),
+                                kernel_regularizer = l2(0.1),
+                                kernel_initializer = 'he_normal'))(x)
         # model.add(BatchNormalization())
-        model.add(Activation('relu'))
-        # model.add(Dropout(0.5))
+        x = (Activation('relu'))(x)
+        # if not is_test: model.add(Dropout(0.5))
 
-        model.add(Convolution2D(filters = 64, kernel_size = (4, 4), strides = (2, 2)))
+        x = (Convolution2D(filters = 32, kernel_size = (4, 4), strides = (2, 2),
+                                kernel_regularizer = l2(0.1),
+                                kernel_initializer = 'he_normal'))(x)
         # model.add(BatchNormalization())
-        model.add(Activation('relu'))
-        # model.add(Dropout(0.5))
+        x = (Activation('relu'))(x)
+        # if not is_test: model.add(Dropout(0.5))
 
-        model.add(Convolution2D(filters = 64, kernel_size = (3, 3), strides = (1, 1)))
-        # model.add(BatchNormalization())
-        model.add(Activation('relu'))
-        # model.add(Dropout(0.5))
+        # DEBUG: Removed Third layer to make model smaller
+        # x = (Convolution2D(filters = 32, kernel_size = (3, 3), strides = (1, 1),
+        #                         kernel_regularizer = l2(0.01)))(x)
+        # # model.add(BatchNormalization())
+        # x = (Activation('relu'))(x)
+        # if not is_test: model.add(Dropout(0.5))
 
-        model.add(Flatten())
-        flatten = model.layers[-1].output # get output of the Flatten() layer
+        flatten = (Flatten())(x)
+        # flatten = model.layers[-1].output # get output of the Flatten() layer
 
         # Dueling DQN -- decompose output to Advantage and Value parts
         # V(s): how good it is to be in any given state.
         # A(a): how much better taking a certain action would be compared to the others
-        fc1 = Dense(units = 512, activation = None)(flatten)
-        advantage = Dense(self.action_size, activation = None)(fc1)
-        fc2 = Dense(units = 512, activation = None)(flatten)
-        value = Dense(1)(fc2)
+        fc1 = Dense(units = 128, activation = None, kernel_regularizer = l2(0.1),
+                    kernel_initializer = 'he_normal')(flatten)
+        advantage=Dense(self.action_size, activation = None,
+                        kernel_regularizer = l2(0.1),kernel_initializer = 'he_normal')(fc1)
+        # DEBUG: Simplify the net
+        # fc2 = Dense(units = 512, activation = None, kernel_regularizer = l2(0.01))(flatten)
+        # value = Dense(1, kernel_regularizer = l2(0.01))(fc2)
         # dueling_type == 'avg'
         # Q(s,a;theta) = V(s;theta) + (A(s,a;theta)-Avg_a(A(s,a;theta)))
-        policy = Lambda(lambda x: x[0]-K.mean(x[0])+x[1],
-                        output_shape = (self.action_size, ))([advantage, value])
+        # policy = Lambda(lambda x: x[0]-K.mean(x[0])+x[1],
+        #                 output_shape = (self.action_size, ))([advantage, value])
+        policy = advantage
+        filtered_policy = multiply([policy, mask_input])
 
-        input_layer = model.input
-        self.model = Model(inputs = [input_layer], outputs = [policy])
+        self.model = Model(inputs = [frames_input, mask_input], outputs = [filtered_policy])
         # Create identical copy of model, make sure they dont point to same object
         config = self.model.get_config()
         self.target_model = Model.from_config(config)
         self.target_update() # Assure weights are identical.
-        del(model)
 
-        losses = [clipped_error] # Use Huber Loss.
+        losses = [clipped_masked_error(mask_input)] # Use Huber Loss.
         metrics = ["mae", mean_q]
-        self.model.compile( loss = losses, optimizer = Adam(lr = self.learn_rate),
+
+        self.model.compile( loss = losses,
+                            optimizer = Adam(   lr = self.learn_rate,
+                                                epsilon = 0.01,
+                                                decay = 1e-4,
+                                                clipnorm = 1.),
                             metrics = metrics)
-        self.target_model.compile(  loss = 'MSE', optimizer = Adam(lr = self.learn_rate),
-                                    metrics = metrics)
+        #  Loss, optimizer and metrics just dummy as never trained
+        self.target_model.compile(  loss = 'MSE',
+                                    optimizer = Adam(),
+                                    metrics = [])
 
         print(self.model.summary())
         print("Successfully constructed networks.")
@@ -112,8 +147,9 @@ class DuelQ(object):
 
         https://github.com/keras-rl/keras-rl/blob/master/rl/policy.py
         """
-        q_values = self.model.predict( state.reshape(1, *self.img_size, self.num_frames),
-                                        batch_size = 1)
+        all_one_mask = np.ones((1, self.action_size), dtype = np.uint8)
+        q_values=self.model.predict([state.reshape(1, *self.img_size, self.num_frames),
+                                    all_one_mask], batch_size = 1)
         if np.random.rand() < epsilon:
             opt_action = random.choice(range(self.action_size))
         else:
@@ -156,32 +192,43 @@ class DuelQ(object):
 
         ## DOUBLE DQN
         # Use primary network to choose an action
-        q_nexts = self.model.predict_on_batch(np.reshape(next_states,
-                                            (-1,*self.img_size,self.num_frames)))
+        all_one_mask = np.ones((len(actions), ) + (self.action_size, ),
+                                dtype = np.uint8)
+        q_nexts = self.model.predict_on_batch([np.reshape(next_states,
+                                            (-1,*self.img_size,self.num_frames)),
+                                            all_one_mask])
         next_actions = np.argmax(q_nexts, axis=1)
         # Use target network to generate q value for that action
-        q_targets = self.target_model.predict_on_batch(np.reshape(next_states,
-                                            (-1,*self.img_size,self.num_frames)))
+        q_targets = self.target_model.predict_on_batch([np.reshape(next_states,
+                                            (-1,*self.img_size,self.num_frames)),
+                                            all_one_mask])
         # predict the future discounted reward. target == reward if done
         targets =   rewards + \
                     discount * np.invert(dones).astype(np.float32) * \
                     q_targets[range(batch_size), next_actions]
 
         # Update only actions for which we have observation
+        # This is simultanously implemented on model level. Should not be an issue
+        # In future remove from here.
         q_targets[range(batch_size), actions] = targets # update q to future
 
         # Need this one for error term for memory update
-        q_olds = self.model.predict_on_batch(np.reshape(states,
-                                            (-1,*self.img_size,self.num_frames)))
+        q_olds = self.model.predict_on_batch([np.reshape(states,
+                                            (-1,*self.img_size,self.num_frames)),
+                                            all_one_mask])
         targets_old = q_olds[range(batch_size), actions] # pull out old value of q_hat
         # Get error for updating priorities in the memory
         errors = (abs(targets_old - targets))
+
+        #Get mask to update only q_value that was observed:
+        mask = np.zeros((batch_size, self.action_size), dtype = np.uint8)
+        mask[range(batch_size), actions] = 1
 
         # Reshape as necessary
         states = np.stack(states, axis = 0) # creates new axis
         # q_targets = np.concatenate(q_targets, axis = 0)
 
-        return (states, q_targets, errors)
+        return (states, q_targets, errors, mask)
 
     def predict_sample(self, state, action, reward, next_state, done, discount):
         """Prediction wrapper for batchsize 1. See predict_batch.
@@ -194,10 +241,16 @@ class DuelQ(object):
         if isinstance(self.memory, (Memory, )):
         ## Prioretized memory style
             minibatch, idxs, is_weights = self.memory.sample(self.replay_size)
-            states, q_targets, errors = self.predict_batch(minibatch, discount)
+            states, q_targets, errors, mask = self.predict_batch(minibatch, discount)
             self.memory.batch_update(idxs, errors)
             #state is x, q_target is y
-            loss = self.model.train_on_batch(states, q_targets, sample_weight = is_weights)
+            # tr_id = np.arange(0, self.replay_size*(1-0.2))
+            # vl_id = np.arange(self.replay_size*0.2, self.replay_size, dtype= np.uint8)
+            history = self.model.fit([states, mask], q_targets,
+                                    batch_size = len(minibatch),
+                                    validation_split = 0.2, verbose = 0)
+                                    # validation_data = ([states[vl_id,:], mask[vl_id,:]], q_targets[vl_id,:]),
+
 
             # logger.debug("Sampled Indices: {}".format((idxs)))
             # logger.debug("IS Weights: {}".format((is_weights)))
@@ -205,13 +258,21 @@ class DuelQ(object):
         else:
             ## Simple Style Draw random minibatch sample from memory
             minibatch=random.sample(self.memory, min(len(self.memory), self.replay_size))
-            states, q_targets, errors = self.predict_batch(minibatch, discount)
+            states, q_targets, errors, mask = self.predict_batch(minibatch, discount)
             #state is x, q_target is y
-            loss = self.model.train_on_batch(states, q_targets)
+            # history = self.model.train_on_batch([states, mask], q_targets)
+            # mock validation to enable TensorBoard callback visualizations
+            history = self.model.fit([states, mask], q_targets, batch_size = len(minibatch),
+                                    validation_split = 0.2, verbose=0)
 
-        loss = dict(zip(self.model.metrics_names, loss))
+            # TODO: merge the validation and training dictionary for later consistency
+
+        # history = dict(zip(self.model.metrics_names, loss))
         # logger.info("Loss/Metrics on fit: {}".format(loss))
-        return loss["loss"]
+        metrics = []
+        for met in self.model.metrics_names:
+            metrics.extend(history.history[met])
+        return np.array(metrics), history.validation_data
 
     def save_network(self, path):
         # Saves model at specified path as h5 file.

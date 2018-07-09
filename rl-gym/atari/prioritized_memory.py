@@ -2,7 +2,7 @@ import random
 import numpy as np
 from SumTree import SumTree
 
-class PERMemory:
+class PERMemory(object):
     """Prioritized Experience Replay Memory
 
     https://arxiv.org/abs/1511.05952
@@ -13,13 +13,15 @@ class PERMemory:
     a = 0.6
     beta = 0.4
     beta_increment_per_sampling = 0.001
-    #abs_err_upper = 1. # clipped abs error
 
     def __init__(self, capacity):
         self.tree = SumTree(capacity)
         self.capacity = capacity
+        self.max_error = 1.
+        # abs_err_upper = 1. # clipped abs error
 
     def _get_priority(self, error):
+        if np.max(error) > self.max_error: self.max_error = np.max(error)
         return (error + self.e) ** self.a
 
     def add(self, error, sample):
@@ -55,6 +57,15 @@ class PERMemory:
         self.tree.update(idx, p)
 
     def batch_update(self, idxs, errors):
+        """update errors for bunch of samples from memory"""
         ps = self._get_priority(errors)
         for i, p in zip(idxs, ps):
             self.tree.update(i, p)
+
+    def _shuffle_lists(*lists):
+        """shuffle multiple lists together consistently
+        # done by keras
+        """
+        combi_list = list(zip(*lists))
+        random.shuffle(combi_list)
+        return zip(*combi_list)
