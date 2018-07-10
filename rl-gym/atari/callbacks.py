@@ -433,7 +433,7 @@ class UpdateLossMask(KerasCallback):
     def on_batch_begin(self, step, logs={}):
         # TODO: need to double check how to pick up mask from input
         new_loss = self.error(self.model.input[1])
-        if isinstance(self.model.loss, list): new_loss = [new_loss]
+        if not isinstance(self.model.loss, list): new_loss = [new_loss]
         self.model.loss = new_loss
 
 # class AdamLearningRateTracker(Callback):

@@ -120,7 +120,8 @@ class DuelQ(object):
         self.target_model = Model.from_config(config)
         self.target_update() # Assure weights are identical.
 
-        losses = [clipped_masked_error(mask_input)] # Use Huber Loss.
+        # losses = [clipped_masked_error(mask_input)] # Use Huber Loss.
+        losses = ["MSE"] # DEBUG
         metrics = ["mae", mean_q]
 
         self.model.compile( loss = losses,

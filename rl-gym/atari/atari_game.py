@@ -236,7 +236,7 @@ class AtariGame(object):
             callbacks += [TestLogger()]
 
         # Define TB callback and  replace epoch with episode
-        tboard = SubTensorBoard("./tb_logs",
+        tboard = SubTensorBoard("./tb_logs", write_graph = False,
                             histogram_freq = 1, write_grads = True)
         ## this is handled in callbacks
         # tboard.on_episode_end = Callback.on_epoch_end # pass
