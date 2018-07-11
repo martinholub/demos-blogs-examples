@@ -15,7 +15,7 @@ from keras.callbacks import TensorBoard
 from prioritized_memory import PERMemory as Memory
 from logger_utils import _L
 from collections import deque, Counter
-from utils import clipped_masked_error, mean_q
+from utils import clipped_masked_error, mean_q, clipped_error
 
 # logger = _L()
 
@@ -127,7 +127,7 @@ class DuelQ(object):
         self.model.compile( loss = losses,
                             optimizer = Adam(   lr = self.learn_rate,
                                                 epsilon = 0.01,
-                                                decay = 1e-4,
+                                                decay = 1e-5,
                                                 clipnorm = 1.),
                             metrics = metrics)
         #  Loss, optimizer and metrics just dummy as never trained
@@ -281,8 +281,17 @@ class DuelQ(object):
         print("Successfully saved network.")
 
     def load_network(self, path):
-        self.model.load_weights(path)
-        self.target_model.load_weights(path)
+        import pdb; pdb.set_trace()
+        try:
+            custom = {"clipped_error":clipped_error, "mean_q":mean_q}
+            model = load_model(path, custom_objects=custom)
+            self.model = model
+            self.target_update()
+        except ValueError as e:
+            print("Path dos not contain full model, loading weights only.")
+            self.model.load_weights(path)
+            self.target_model.load_weights(path)
+
         print("Succesfully loaded network.")
 
     def target_update(self):

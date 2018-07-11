@@ -15,7 +15,12 @@ import random
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from prioritized_memory import Memory
+import os
+import sys
+if "../" not in sys.path:
+    sys.path.append("../")
+
+from prioritized_memory import PERMemory as Memory
 
 from logger_utils import initialize_logger, teardown_logger
 logger = initialize_logger()
@@ -70,6 +75,7 @@ class dqnAgent(object):
         """Build a NN model for Q-learning task
         """
         # Neural Net for Deep-Q learning Model
+
         model = Sequential()
         # Layer 1
         hs = self.mp.hidden_size
@@ -88,7 +94,7 @@ class dqnAgent(object):
         model.add(Dense(self.ep.action_size, activation = 'linear'))
 
         model.compile(  loss = "MSE",
-                        optimizer = Adam(lr=self.mp.learn_rate, amsgrad = True)
+                        optimizer = Adam(lr=self.mp.learn_rate)
                         )
         logger.info(model.summary())
         return model
@@ -169,7 +175,7 @@ class dqnAgent(object):
             # Update priorities in memory
             error = abs(target_old - target)
             self.memory.update(idxs[j], error)
-
+            import pdb; pdb.set_trace()
             # state is x, q_target is y
             self.model.fit( state, q_target, epochs = self.mp.num_epochs,
                             batch_size = 1, verbose = 0, sample_weight=[is_weights[[j]]])
@@ -247,9 +253,16 @@ class cartPoleSolver(object):
                 print("Episode {}/{} finished. Mean reward over last 100 episodes: {:.2f}"\
                       .format(ep, self.ep.num_episodes, mean_reward))
 
+
+
         env.close()
         self.episode_rewards = episode_rewards
         self.frames = frames
+
+        checkpoints_dir = "./checkpoints"
+        if not os.path.exists(checkpoints_dir):
+            os.makedirs(checkpoints_dir)
+        self.model.save(os.join(checkpoints_dir, "model.h5"))
 
     def plot_(self):
         """Simple plot wrapper

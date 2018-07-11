@@ -2,6 +2,7 @@ import sys
 from datetime import datetime
 import logging
 from inspect import getmodule
+import os
 
 def _L(skip=0):
     '''Shorthand to get logger from some parent frame
@@ -63,8 +64,9 @@ def initialize_logger():
     # Clean up
     logging.shutdown()
     # Log to file and to stdout
+    create_logs_folder()
     fname = \
-        "logs/aigym_{}.log".format(datetime.now().strftime('%Y%m%d-%H%M%S'))
+        "logs/atari_{}.log".format(datetime.now().strftime('%Y%m%d-%H%M%S'))
     # Get logger
     logger = _L(skip =1)
 
@@ -141,5 +143,5 @@ def create_logs_folder(parent = ".", dirs = ["logs"]):
         if os.path.isdir(dir_path):
             continue
         else:
-            logger.info("Creating {} in {}".format(di, parent))
+            print("Creating {} in {}".format(di, parent))
             os.mkdir(dir_path)

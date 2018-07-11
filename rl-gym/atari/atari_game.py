@@ -97,6 +97,8 @@ class AtariGame(object):
         q_args=(self.learn_rate, self.img_size, self.num_kept_frames,
                 self.action_size, replay_size, max_memory, self.is_test,
                 self.num_episodes)
+
+
         if mode == "DDQN":
             raise NotImplementedError()
         elif mode == "DQN":
@@ -104,6 +106,8 @@ class AtariGame(object):
 
         if load_path is not None:
             self.load_network(load_path)
+
+
 
     def _make_env(self, name):
         """Instantiate an OpenAI ennvironment
@@ -763,12 +767,13 @@ class AtariGame(object):
 
 ## ----------------------------------------------------------------------------
 ## Execution
-NUM_EPISODES = 700
-MIN_STEPS_TRAIN = 20000
-EPSILON = 1.
+NUM_EPISODES = 3000
+MIN_STEPS_TRAIN = 30000
+EPSILON = .5
 LEARN_RATE = 0.01 # previously 0.00025 which seems very low
+LOAD_PATH = "./saved_models/BreakoutDeterministic-v4_ep1500_final.h5"
 # to check: decay, l2, loss (could be uninformative?)
 if __name__ == '__main__':
     game = AtariGame(num_episodes = NUM_EPISODES, min_steps_train = MIN_STEPS_TRAIN,
-                    epsilon = EPSILON, learn_rate = LEARN_RATE)
+                    epsilon = EPSILON, learn_rate = LEARN_RATE, load_path = LOAD_PATH)
     game.main()
