@@ -11,6 +11,7 @@ from keras import __version__ as KERAS_VERSION
 from keras.callbacks import Callback as KerasCallback, CallbackList as KerasCallbackList
 from keras.utils.generic_utils import Progbar
 from keras.callbacks import TensorBoard
+from keras.optimizers import Adam, RMSprop
 import keras.backend as K
 
 class Callback(KerasCallback):
@@ -464,17 +465,26 @@ class SubTensorBoard(TensorBoard):
         super(SubTensorBoard, self).__init__(*args, **kwargs)
 
     def lr_getter(self):
-        # Get vals
         decay = self.model.optimizer.decay
         lr = self.model.optimizer.lr
         iters = self.model.optimizer.iterations # only this should not be const
-        beta_1 = self.model.optimizer.beta_1
-        beta_2 = self.model.optimizer.beta_2
-        # calculate
-        lr = lr * (1. / (1. + decay * K.cast(iters, K.dtype(decay))))
-        t = K.cast(iters, K.floatx()) + 1
-        lr_t = lr * (K.sqrt(1. - K.pow(beta_2, t)) / (1. - K.pow(beta_1, t)))
-        return np.float32(K.eval(lr_t))
+        if isinstance(self.model.optimizer, (Adam, )):
+            # Get vals
+            beta_1 = self.model.optimizer.beta_1
+            beta_2 = self.model.optimizer.beta_2
+            # calculate
+            lr = lr * (1. / (1. + decay * K.cast(iters, K.dtype(decay))))
+            t = K.cast(iters, K.floatx()) + 1
+            lr_t = lr * (K.sqrt(1. - K.pow(beta_2, t)) / (1. - K.pow(beta_1, t)))
+            return np.float32(K.eval(lr_t))
+        elif isinstance(self.model.optimizer, (RMSprop, )):
+            lr = lr * (1. / (1. + decay * K.cast(iters, K.dtype(decay))))
+            return np.float32(K.eval(lr))
+
+        else:
+            lr = lr * (1. / (1. + decay * K.cast(iters, K.dtype(decay))))
+            return np.float32(K.eval(lr))
+
 
     def on_episode_end(self, episode, logs = {}):
         logs.update({"lr": self.lr_getter()})

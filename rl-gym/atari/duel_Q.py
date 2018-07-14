@@ -124,11 +124,17 @@ class DuelQ(object):
         losses = ["MSE"] # DEBUG
         metrics = ["mae", mean_q]
 
+        # optimizer = Adam(   lr = self.learn_rate,
+        #                     epsilon = 0.01,
+        #                     decay = 1e-5,
+        #                     clipnorm = 1.)
+        optimizer = RMSprop(lr = self.learn_rate,
+                            epsilon = 0.00,
+                            rho = 0.99,
+                            decay = 1e-6,
+                            clipnorm = 1.)
         self.model.compile( loss = losses,
-                            optimizer = Adam(   lr = self.learn_rate,
-                                                epsilon = 0.01,
-                                                decay = 1e-5,
-                                                clipnorm = 1.),
+                            optimizer = optimizer,
                             metrics = metrics)
         #  Loss, optimizer and metrics just dummy as never trained
         self.target_model.compile(  loss = 'MSE',
@@ -281,7 +287,6 @@ class DuelQ(object):
         print("Successfully saved network.")
 
     def load_network(self, path):
-        import pdb; pdb.set_trace()
         try:
             custom = {"clipped_error":clipped_error, "mean_q":mean_q}
             model = load_model(path, custom_objects=custom)
