@@ -60,9 +60,6 @@ class DuelQ(object):
           Using Batch Normlization requires same size of batch on training and
           test. This cannot be easily implemented in RL scenario with PER.
         """
-        # Sequential model.add replaced with x = (...)(x) functional API
-        # model = Sequential()
-
         #  Mask that allows updating of only action that was observed
         mask_input = Input((self.action_size, ), name = 'mask')
         #  Preprocess data on input, allows storing as uint8
@@ -70,48 +67,36 @@ class DuelQ(object):
         # Scale by 142 instead of 255, because for BreakOut the max val is 142
         x = (Lambda(lambda x: x / 142.0)(frames_input))
 
-        # DEBUG: All filters, and units halved to make easier to train
-
-        x = (Convolution2D(filters = 16, kernel_size = (8, 8), strides = (4, 4),
+        x = (Convolution2D(filters = 32, kernel_size = (8, 8), strides = (4, 4),
                                 # input_shape = self.img_size + (self.num_frames, ),
                                 kernel_regularizer = l2(0.1),
                                 kernel_initializer = 'he_normal'))(x)
-        # model.add(BatchNormalization())
         x = (Activation('relu'))(x)
-        # if not is_test: model.add(Dropout(0.5))
 
-        x = (Convolution2D(filters = 32, kernel_size = (4, 4), strides = (2, 2),
+        x = (Convolution2D(filters = 64, kernel_size = (4, 4), strides = (2, 2),
                                 kernel_regularizer = l2(0.1),
                                 kernel_initializer = 'he_normal'))(x)
-        # model.add(BatchNormalization())
         x = (Activation('relu'))(x)
-        # if not is_test: model.add(Dropout(0.5))
 
-        # DEBUG: Removed Third layer to make model smaller
-        # x = (Convolution2D(filters = 32, kernel_size = (3, 3), strides = (1, 1),
-        #                         kernel_regularizer = l2(0.01)))(x)
-        # # model.add(BatchNormalization())
-        # x = (Activation('relu'))(x)
-        # if not is_test: model.add(Dropout(0.5))
+        x = (Convolution2D(filters = 64, kernel_size = (3, 3), strides = (1, 1),
+                                kernel_regularizer = l2(0.01)))(x)
+        x = (Activation('relu'))(x)
 
         flatten = (Flatten())(x)
-        # flatten = model.layers[-1].output # get output of the Flatten() layer
 
         # Dueling DQN -- decompose output to Advantage and Value parts
         # V(s): how good it is to be in any given state.
         # A(a): how much better taking a certain action would be compared to the others
-        fc1 = Dense(units = 128, activation = None, kernel_regularizer = l2(0.1),
+        fc1 = Dense(units = 512, activation = None, kernel_regularizer = l2(0.1),
                     kernel_initializer = 'he_normal')(flatten)
         advantage=Dense(self.action_size, activation = None,
                         kernel_regularizer = l2(0.1),kernel_initializer = 'he_normal')(fc1)
-        # DEBUG: Simplify the net
-        # fc2 = Dense(units = 512, activation = None, kernel_regularizer = l2(0.01))(flatten)
-        # value = Dense(1, kernel_regularizer = l2(0.01))(fc2)
+        fc2 = Dense(units = 512, activation = None, kernel_regularizer = l2(0.01))(flatten)
+        value = Dense(1, kernel_regularizer = l2(0.01))(fc2)
         # dueling_type == 'avg'
         # Q(s,a;theta) = V(s;theta) + (A(s,a;theta)-Avg_a(A(s,a;theta)))
-        # policy = Lambda(lambda x: x[0]-K.mean(x[0])+x[1],
-        #                 output_shape = (self.action_size, ))([advantage, value])
-        policy = advantage
+        policy = Lambda(lambda x: x[0]-K.mean(x[0])+x[1],
+                        output_shape = (self.action_size, ))([advantage, value])
         filtered_policy = multiply([policy, mask_input])
 
         self.model = Model(inputs = [frames_input, mask_input], outputs = [filtered_policy])
@@ -120,8 +105,8 @@ class DuelQ(object):
         self.target_model = Model.from_config(config)
         self.target_update() # Assure weights are identical.
 
-        # losses = [clipped_masked_error(mask_input)] # Use Huber Loss.
-        losses = ["MSE"] # DEBUG
+        losses = [clipped_masked_error(mask_input)] # Can also use Huber Loss.
+        # losses = ["MSE"]
         metrics = ["mae", mean_q]
 
         # optimizer = Adam(   lr = self.learn_rate,

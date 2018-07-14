@@ -17,6 +17,8 @@ anim/
 summary/
 tb_logs*
 not_used/
+output*.txt
+experiments/
 
 ## Some defaults ##
 # Byte-compiled / optimized / DLL files

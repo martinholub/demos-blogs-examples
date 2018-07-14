@@ -427,6 +427,10 @@ class ModelIntervalCheckpoint(Callback):
 
 # Alternative is to define loss as a new layer
 class UpdateLossMask(KerasCallback):
+    """Update A Loss Mask before each training
+
+    # Alternative is to define loss as a new layer
+    """
     def __init__(self, error):
         # Error is a function that takes mask and compiles to other function taking y_true, y_pred
         self.error = error
@@ -461,6 +465,14 @@ class UpdateLossMask(KerasCallback):
 #         # self.learn_rate[episode] = lr_t
 
 class SubTensorBoard(TensorBoard):
+    """Subclassing of tensorboard to log and visualize custom metrics and others
+
+    Note that for this to work, you will have to define a way how to handle `on_episode_end`
+    calls.
+
+    Check https://github.com/martinholub/demos-blogs-examples/blob/master/rl-gym/atari/callbacks.py
+    for working implementation.
+    """
     def __init__(self, *args, **kwargs):
         super(SubTensorBoard, self).__init__(*args, **kwargs)
 
